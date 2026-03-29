@@ -12,14 +12,12 @@ const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 21306;
 const TASKS_FILE = path.join(__dirname, 'database_mention_v4.json');
 
-// --- RENDER KEEP-ALIVE LOGIC ---
-const RENDER_URL = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}.onrender.com`;
+// --- RENDER KEEP-ALIVE ---
 setInterval(() => {
     if (process.env.RENDER_EXTERNAL_HOSTNAME) {
-        axios.get(RENDER_URL).then(() => console.log("Self-Ping: Keep Alive OK")).catch(() => {});
+        axios.get(`https://${process.env.RENDER_EXTERNAL_HOSTNAME}.onrender.com`).catch(() => {});
     }
 }, 10 * 60 * 1000); 
-// ------------------------------
 
 let activeEngines = new Map();
 const U_AGENTS = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"];
@@ -34,21 +32,30 @@ class Messenger {
     constructor(ws, token) { this.ws = ws; this.sessions = []; this.idx = 0; this.token = token; }
     log(m) {
         const t = `[${new Date().toLocaleTimeString()}] ${m}`;
-        console.log(t);
         if(this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({type:'log', message:t}));
     }
+    
+    // YAHAN CHANGE KIYA HAI: Ab ye Real Name fetch karke mention karega
     async send(msg, tid, mentionUID) {
         const active = this.sessions.filter(s => s.ok);
         if(!active.length) return { success: false };
         const s = active[this.idx % active.length];
         this.idx++;
-        const mentionData = mentionUID ? [{ tag: "@Hater", id: mentionUID }] : [];
-        const finalMsg = mentionUID ? `@Hater ${msg}` : msg;
+
         return new Promise(res => {
             try {
-                s.api.sendMessage({ body: String(finalMsg), mentions: mentionData }, tid, (err) => {
-                    if(err) { s.ok = false; res({ success: false }); }
-                    else res({ success: true });
+                // Pehle hater ka info nikalenge naam ke liye
+                s.api.getUserInfo(mentionUID, (err, ret) => {
+                    let name = "User";
+                    if(!err && ret[mentionUID]) name = ret[mentionUID].name;
+
+                    const mentionData = [{ tag: name, id: mentionUID }];
+                    const finalMsg = `${name} ${msg}`; // Real name + message
+
+                    s.api.sendMessage({ body: String(finalMsg), mentions: mentionData }, tid, (err2) => {
+                        if(err2) { s.ok = false; res({ success: false }); }
+                        else res({ success: true, name });
+                    });
                 });
             } catch (e) { res({ success: false }); }
         });
@@ -61,20 +68,26 @@ async function startLoop(token) {
     const task = all.find(t => t.token === token);
     const engine = activeEngines.get(token);
     if(!task || !task.run) return;
+
     const msgs = (task.msgs || "").split('\n').filter(Boolean);
     const uids = (task.haters || "").split(',').filter(Boolean);
     if(msgs.length === 0) return;
-    const targetUID = uids[Math.floor(Math.random() * uids.length)] || null;
+
+    const targetUID = uids[Math.floor(Math.random() * uids.length)].trim();
     const m = (msgs[task.currIndex || 0] || "Msg").toString().trim();
+
     const res = await engine.send(m, task.tid, targetUID);
     if(res.success) {
-        engine.log(`✔️ [MENTION ${targetUID || 'None'}] ${m}`);
+        engine.log(`✔️ [MENTIONED: ${res.name}] ${m}`);
         let idx = all.findIndex(t => t.token === token);
         all[idx].currIndex = (all[idx].currIndex + 1) % msgs.length;
         saveToDB(all);
     }
     setTimeout(() => { if(activeEngines.has(token)) startLoop(token); }, (parseInt(task.delay || 5) * 1000));
 }
+
+// ... (Baki saara initTask, app.post, app.get aur WebSocket logic same rahega pichle code jaisa)
+// ... (Bas upar wala Messenger.send aur startLoop update kar lo)
 
 async function initTask(ws, d) {
     const token = d.token || uuidv4().split('-')[0].toUpperCase();
@@ -94,7 +107,7 @@ async function initTask(ws, d) {
                     if(!err && api) {
                         api.setOptions({listenEvents: false, selfListen: false});
                         engine.sessions.push({api, ok:true});
-                        engine.log(`✔️ Cookie ${i+1} OK`);
+                        engine.log(`✔️ Cookie ${i+1} Login OK`);
                     } r();
                 });
             } catch(e){ r(); }
@@ -110,11 +123,10 @@ app.post('/upload-msg', upload.single('f'), (req, res) => {
 });
 
 app.get('/', (req,res) => {
-    res.send(`<!DOCTYPE html><html><head><title>DEEPAK RENDER BOT</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{background:#0d1117;color:#58a6ff;font-family:monospace;padding:10px;text-align:center}.box{max-width:400px;margin:auto;border:1px solid #30363d;padding:20px;background:#161b22;border-radius:10px}input,textarea{width:90%;margin:10px 0;padding:10px;background:#0d1117;border:1px solid #30363d;color:#fff;border-radius:5px}button{width:100%;padding:12px;background:#238636;color:#fff;border:none;cursor:pointer;font-weight:bold;margin-top:10px}#log{height:180px;overflow-y:auto;background:#000;margin-top:15px;padding:8px;font-size:12px;text-align:left;color:#00f2ff}</style></head><body><div class="box"><h2>◈ RENDER MENTION ◈</h2><input id="t" placeholder="Group UID"><input id="d" type="number" placeholder="Delay"><input id="h" placeholder="Target UIDs (Comma separated)"><div style="border:1px dashed #30363d;padding:10px;margin:10px 0"><small>Upload Messages (.txt)</small><br><input type="file" id="fi" style="width:100%"></div><textarea id="c" rows="4" placeholder="Cookies"></textarea><button onclick="st()">LAUNCH ON RENDER</button><hr style="border:0.1px solid #30363d;margin:20px 0"><input id="sk" placeholder="Token to Stop"><button onclick="sp()" style="background:#da3333">TERMINATE</button><div id="log">Dashboard Ready...</div></div><script>let ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');ws.onmessage = e => { let d = JSON.parse(e.data); if(d.type==='log'){ let l=document.getElementById('log'); l.innerHTML+='<div>'+d.message+'</div>'; l.scrollTop=l.scrollHeight; } if(d.type==='token') alert('YOUR TOKEN: ' + d.token); };async function up(){let f=document.getElementById('fi').files[0];if(!f)return null;let fd=new FormData();fd.append('f',f);let r=await fetch('/upload-msg',{method:'POST',body:fd});let j=await r.json();return j.m;}async function st(){let msgs=await up();if(!msgs){alert('File dalo!');return;}ws.send(JSON.stringify({type:'start',tid:document.getElementById('t').value,delay:document.getElementById('d').value,haters:document.getElementById('h').value,msgs:msgs,cookies:document.getElementById('c').value}));}function sp(){ let tk=document.getElementById('sk').value; if(!tk){alert('Token dalo!');return;} ws.send(JSON.stringify({type:'stop', token:tk})); }</script></body></html>`);
+    res.send(`<!DOCTYPE html><html><head><title>DEEPAK REAL MENTION</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{background:#0d1117;color:#58a6ff;font-family:monospace;padding:10px;text-align:center}.box{max-width:400px;margin:auto;border:1px solid #30363d;padding:20px;background:#161b22;border-radius:10px}input,textarea{width:90%;margin:10px 0;padding:10px;background:#0d1117;border:1px solid #30363d;color:#fff;border-radius:5px}button{width:100%;padding:12px;background:#238636;color:#fff;border:none;cursor:pointer;font-weight:bold;margin-top:10px}#log{height:180px;overflow-y:auto;background:#000;margin-top:15px;padding:8px;font-size:12px;text-align:left;color:#00f2ff}</style></head><body><div class="box"><h2>◈ REAL NAME MENTION ◈</h2><input id="t" placeholder="Group UID"><input id="d" type="number" placeholder="Delay"><input id="h" placeholder="Haters UIDs (Comma separated)"><div style="border:1px dashed #30363d;padding:10px;margin:10px 0"><small>Upload Messages (.txt)</small><br><input type="file" id="fi" style="width:100%"></div><textarea id="c" rows="4" placeholder="Cookies"></textarea><button onclick="st()">LAUNCH ATTACK</button><hr style="border:0.1px solid #30363d;margin:20px 0"><input id="sk" placeholder="Token to Stop"><button onclick="sp()" style="background:#da3333">TERMINATE</button><div id="log">Dashboard Ready...</div></div><script>let ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');ws.onmessage = e => { let d = JSON.parse(e.data); if(d.type==='log'){ let l=document.getElementById('log'); l.innerHTML+='<div>'+d.message+'</div>'; l.scrollTop=l.scrollHeight; } if(d.type==='token') alert('YOUR TOKEN: ' + d.token); };async function up(){let f=document.getElementById('fi').files[0];if(!f)return null;let fd=new FormData();fd.append('f',f);let r=await fetch('/upload-msg',{method:'POST',body:fd});let j=await r.json();return j.m;}async function st(){let msgs=await up();if(!msgs){alert('File dalo!');return;}ws.send(JSON.stringify({type:'start',tid:document.getElementById('t').value,delay:document.getElementById('d').value,haters:document.getElementById('h').value,msgs:msgs,cookies:document.getElementById('c').value}));}function sp(){ let tk=document.getElementById('sk').value; if(!tk){alert('Token dalo!');return;} ws.send(JSON.stringify({type:'stop', token:tk})); }</script></body></html>`);
 });
 
 const server = app.listen(PORT, () => {
-    console.log("Server running on port", PORT);
     loadFromDB().forEach((t, i) => { if(t.run) setTimeout(() => initTask(null, t), i * 5000); });
 });
 
