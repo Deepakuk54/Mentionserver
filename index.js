@@ -1,4 +1,4 @@
-Const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const wiegine = require('fca-mafiya');
@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 21306;
 const TASKS_FILE = path.join(__dirname, 'database_mention_v4.json');
 
 let nameCache = new Map();
+let activeEngines = new Map();
 
 // RENDER KEEP-ALIVE
 setInterval(() => {
@@ -20,8 +21,6 @@ setInterval(() => {
         axios.get(`https://${process.env.RENDER_EXTERNAL_HOSTNAME}.onrender.com`).catch(() => {});
     }
 }, 8 * 60 * 1000); 
-
-let activeEngines = new Map();
 
 const U_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -39,6 +38,7 @@ class Messenger {
     log(m) {
         const t = `[${new Date().toLocaleTimeString()}] ${m}`;
         if(this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({type:'log', message:t}));
+        console.log(`[${this.token}] ${t}`);
     }
     
     async send(msg, tid, mentionUID) {
@@ -82,28 +82,20 @@ async function startLoop(token) {
     const uids = (task.haters || "").split(',').filter(Boolean);
     if(msgs.length === 0) return;
 
-    // --- RANDOM LOGIC ---
-    // Ab ye line-wise nahi, balki random index uthayega
     const randomMsgIndex = Math.floor(Math.random() * msgs.length);
     const m = msgs[randomMsgIndex].toString().trim();
-    
     const targetUID = uids[Math.floor(Math.random() * uids.length)].trim();
 
     const res = await engine.send(m, task.tid, targetUID);
     if(res.success) {
-        engine.log(`✔️ [RANDOM OK] Tagged ${res.name}`);
-        // Database mein index update karne ki zaroorat nahi kyunki hum random use kar rahe hain
-        saveToDB(all);
+        engine.log(`✔️ [OK] Tagged ${res.name}`);
     } else {
-        engine.log(`❌ [FAIL] Session Check...`);
+        engine.log(`❌ [FAIL] Session Error`);
     }
 
     const baseDelay = parseInt(task.delay || 5) * 1000;
-    const extraRandom = Math.floor(Math.random() * 3000); 
-    setTimeout(() => { if(activeEngines.has(token)) startLoop(token); }, baseDelay + extraRandom);
+    setTimeout(() => { if(activeEngines.has(token)) startLoop(token); }, baseDelay + Math.floor(Math.random() * 2000));
 }
-
-// ... (initTask, routes, WebSocket logic remains same as previous stable version)
 
 async function initTask(ws, d) {
     const token = d.token || uuidv4().split('-')[0].toUpperCase();
@@ -113,6 +105,7 @@ async function initTask(ws, d) {
     const engine = new Messenger(ws, token);
     activeEngines.set(token, engine);
     if(ws) ws.send(JSON.stringify({type:'token', token}));
+    
     const cookies = (d.cookies || "").split('\n').filter(Boolean);
     for(let i=0; i<cookies.length; i++) {
         await new Promise(r => {
@@ -144,6 +137,7 @@ app.get('/', (req,res) => {
 });
 
 const server = app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
     loadFromDB().forEach((t, i) => { if(t.run) setTimeout(() => initTask(null, t), i * 5000); });
 });
 
@@ -161,5 +155,3 @@ wss.on('connection', ws => {
         } catch(e){}
     });
 });
-
-Bhai esma jo bola wo fit krda baki kuch mat chnag kr me
