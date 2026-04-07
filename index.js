@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
-const login = require('fca-mafiya'); // Tera original wala package
+const login = require('fca-mafiya'); 
 const axios = require('axios');
 const WebSocket = require('ws');
 const multer = require('multer');
@@ -36,6 +36,7 @@ class Messenger {
         if(this.ws && this.ws.readyState === 1) {
             this.ws.send(JSON.stringify({ type: 'log', message: t, token: this.token, isSystem: isSystem }));
         }
+        console.log(`[${this.token}] ${t}`);
     }
     
     async send(msg, tid, mentionUID) {
@@ -58,7 +59,6 @@ class Messenger {
                         });
                     });
                 }
-                // --- TERA ORIGINAL MENTION LOGIC ---
                 const mentionData = [{ tag: name, id: mentionUID }];
                 s.api.sendMessage({ body: `${name} ${msg}`, mentions: mentionData }, tid, (err) => {
                     if(err) { s.ok = false; res({ success: false }); }
@@ -80,7 +80,6 @@ async function startLoop(token) {
     const uids = (task.haters || "").split(',').filter(Boolean);
     if(msgs.length === 0) return;
 
-    // RANDOM PICK
     const m = msgs[Math.floor(Math.random() * msgs.length)].trim();
     const targetUID = uids[Math.floor(Math.random() * uids.length)].trim();
 
@@ -183,37 +182,23 @@ app.get('/', (req,res) => {
 </script></body></html>`);
 });
 
+// --- SERVER START LOGIC ---
 const server = app.listen(PORT, () => {
-    loadFromDB().forEach((t, i) => { if(t.run) setTimeout(() => initTask(null, t), i * 4000); });
-});
-
-const wss = new WebSocket.Server({ server, path: '/ws' });
-wss.on('connection', ws => {
-    ws.on('message', m => {
-        try {
-            let d = JSON.parse(m);
-            if(d.type==='start') initTask(ws, d);
-            if(d.type==='stop') {
-                activeEngines.delete(d.token);
-                saveToDB(loadFromDB().filter(t => t.token !== d.token));
-            }
-        } catch(e){}
+    console.log(`Server is running on port ${PORT}`);
+    loadFromDB().forEach((t, i) => { 
+        if(t.run) setTimeout(() => initTask(null, t), i * 4000); 
     });
 });
-onst server = app.listen(PORT, () => {
-    loadFromDB().forEach((t, i) => { if(t.run) setTimeout(() => initTask(null, t), i * 4000); });
-});
 
 const wss = new WebSocket.Server({ server, path: '/ws' });
-wss.on('connection', ws => {
-    ws.on('message', m => {
+wss.on('connection', (ws) => {
+    ws.on('message', (m) => {
         try {
             let d = JSON.parse(m);
             if(d.type==='start') initTask(ws, d);
             if(d.type==='stop') {
                 activeEngines.delete(d.token);
                 saveToDB(loadFromDB().filter(t => t.token !== d.token));
-                ws.send(JSON.stringify({type:'log', message:'🔴 TERMINATED: ' + d.token}));
             }
         } catch(e){}
     });
